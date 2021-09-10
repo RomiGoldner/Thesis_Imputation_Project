@@ -1,0 +1,402 @@
+---
+title: "MAGIC_imputation_analysis"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+getwd()
+```
+
+```{r}
+# install necessray R packages for MAGIC 
+install.packages("Rmagic")
+install.packages("phateR")
+```
+
+```{r}
+# install magic in python using - pip install --user magic-impute 
+```
+
+```{r pressure, echo=FALSE}
+library(tidyr)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(purrr)
+library(devtools)
+library(data.table)
+library(Rmagic)
+library(viridis)
+library(phateR)
+```
+
+## Imputation Algorithm : MAGIC
+Article : https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6030502/ 
+
+We will first apply the imputation using the MAGIC algorithm.
+
+```{r}
+raw.data <- Read10X(data.dir = "/Users/romigoldner/Desktop/Research Proposal/Masters/R Code/filtered_feature_bc_matrix/")
+```
+
+```{r}
+raw_gene_expression <- raw.data$`Gene Expression`
+raw_gene_expression
+```
+
+```{r}
+raw_seurat_obj <- CreateSeuratObject(counts = raw_gene_expression, project = "pbmc10k", min.cells = 3, min.features = 200)
+```
+
+```{r}
+raw_filtered_counts <- raw_seurat_obj@assays$RNA@counts
+# transpose matrix for algorithm input
+raw_filtered_counts_tran <- t(as.matrix(raw_filtered_counts))
+```
+
+```{r}
+# run magic
+data_MAGIC <- magic(raw_filtered_counts_tran, genes="all_genes")
+```
+
+```{r}
+magic_imputed_counts <- data_MAGIC$result
+col_names <- colnames(magic_imputed_counts)
+row_names <- rownames(magic_imputed_counts)
+```
+
+```{r}
+magic_imputed_counts %>% mutate(across(everything(), as.character))
+```
+
+```{r}
+# transpose the matrix back to genes X cells as SeuratObject expects to get
+transpose_magic_impute <- as.data.frame(t(as.matrix(magic_imputed_counts)))
+transpose_magic_impute
+```
+
+```{r}
+# Initialize Seurat object with raw (un-normalized) data
+seurat_magic_imputed <- CreateSeuratObject(counts = transpose_magic_impute, project = "imputed_genes", min.cells = 3, min.features = 200)
+seurat_magic_imputed
+```
+
+```{r}
+# See what the dataset looks like 
+seurat_magic_imputed[["RNA"]]@counts
+```
+
+We already see that more genes will be incorporated here.
+
+## Standard pre processing workflow
+We will use some common metrics to analyze our data:
+ - The percentage of reads that map to the mitochondrial genome
+ - number of unique genes in each cell
+
+```{r}
+# Here we will add the mitochondrial genes
+seurat_magic_imputed[["percent.mt"]] <- PercentageFeatureSet(object = seurat_magic_imputed, pattern = "^MT")
+```
+
+View QC metrics using a violin plot use *VlnPlot*
+
+```{r}
+VlnPlot(seurat_magic_imputed, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+We will compare the result to the ones in the non imputed data.
+Here we see that the minimum number of features (genes) for each cell is above around 10000 in comparison to the non imputed where it was above 200. 
+DeepImpute got it to over 2000 which means that MAGIC imputed much more genes.
+In addition we see that the percentage of reads that map to the mitochondrial genome is much more dense here and mostly under 10 in comparison to the non imputed data where it was less dense with more outskirts.
+
+```{r}
+head(seurat_magic_imputed@meta.data, 100)
+seurat_magic_imputed@meta.data # 7865x4
+```
+
+Look at feature - feature relationship
+
+```{r}
+plot1 <- FeatureScatter(seurat_magic_imputed, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(seurat_magic_imputed, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot3 <- FeatureScatter(seurat_magic_imputed, feature1 = "percent.mt", feature2 = "nFeature_RNA")
+# Display the plots
+# To display side by side : plot1 + plot2 
+plot1
+plot2
+plot3
+```
+
+We will now filter out data according to the results of the violin plot.
+
+```{r}
+seurat_magic_imputed_filtered <- subset(seurat_magic_imputed, subset = nFeature_RNA > 12000 & nFeature_RNA < 16000 & percent.mt < 10 & nCount_RNA < 10000)
+```
+
+```{r}
+seurat_magic_imputed_filtered@meta.data
+```
+
+We filtered out some not relevant cells according to the plots above, and now we are left with 6686 cells. Now we will Normalize our data. 
+
+## Normalize Data
+Normalization with LogNormalize - multiply by 10000 and take log of result.
+
+```{r}
+seurat_magic_imputed_filtered <- NormalizeData(seurat_magic_imputed_filtered, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+## Feature Selection 
+We will now look for highly variable features. These features will be highly expressed in some cells and low in others. The default number of variable features is 2000. We are using the same number of features as we did for the non imputed data to make our comparison as viable as possible.
+
+```{r}
+seurat_magic_imputed_filtered <- FindVariableFeatures(seurat_magic_imputed_filtered, selection.method = "vst", nfeatures = 2000)
+seurat_magic_imputed_filtered
+```
+
+Now we will plot the Variable Features and specifically label the top 10.
+
+```{r}
+# identify top 10 genes among the variable genes
+top_10_imputed <- head(VariableFeatures(seurat_magic_imputed_filtered), 10)
+
+# plot top 10 genes
+plot1 <- VariableFeaturePlot(seurat_magic_imputed_filtered)
+plot2 <- LabelPoints(plot = plot1, points = top_10_imputed, repel = TRUE)
+plot1
+plot2
+```
+
+These results reveal some interesting aspects.
+They come after we ran the imputation using MAGIC so we can start comparing the results between the different methods as well. 
+Surprisingly we see that these results are more similar to the control in the aspect of how the variable genes are spread our and in terms of the genes themselves. 
+We have a 40% similarity among the top 10 genes between the magic imputed 
+data with the control.
+
+## Scaling the data
+We will scale the data before preforming any sort of dimensionality reduction.
+This step will prevent the highly expressed genes from dominating in downstream analysis. 
+Results will be stored in seurat_magic_imputed_filtered[["RNA"]]@scale.data.
+
+```{r}
+all.genes <- row.names(seurat_magic_imputed_filtered)
+seurat_magic_imputed_filtered <- ScaleData(seurat_magic_imputed_filtered, features = all.genes)
+```
+
+## Preform linear dimensionality reduction
+We will now preform PCA on the data.
+The PCA will run based on the variable features we found earlier. 
+
+```{r}
+seurat_magic_imputed_filtered <- RunPCA(seurat_magic_imputed_filtered, features = VariableFeatures(seurat_magic_imputed_filtered))
+```
+
+```{r}
+seurat_magic_imputed_filtered[["pca"]]
+```
+
+We will now examine and visualise the PCA results in a few ways.
+We will use VisDimReduction(), DimPlot() and DimHeatmap() functions.
+The positive and negative grouping refers to the genes in regards to the component.
+
+```{r}
+# Visualization of top genes associated with reduction components
+VizDimLoadings(seurat_magic_imputed_filtered, dims = 1:2, reduction = "pca")
+```
+
+We notice here two things. The first is that the top genes associated with reduction components changed, which makes sense given the analysis we made earlier.
+In PC_2 the increase is more gradual and smooth compared
+to the non imputed control.
+
+```{r}
+# Plot PCA
+DimPlot(seurat_magic_imputed_filtered, reduction = "pca")
+```
+
+In comparison to the non imputed data where the PCA clustered the data into 3 groups,
+here we also see 3 groups but with much less noise and different scale.
+The groups here are more clustered together with much less noise and outskirts compared to the control. 
+
+```{r}
+# Heatmap
+DimHeatmap(seurat_magic_imputed_filtered, dims=1:15, cells=500, balanced = TRUE)
+```
+
+Seems here that the first 3 separate the data very well.
+The data here is separated in a much better way that the non imputed data. 
+
+## Determine the 'dimensionality' of the dataset
+Seurat clusters cells based on their PCA scores. 
+The PC represents a "metafeature" that combines information across a correlated feature set.
+We use here the JackStraw (JackStraw function) : 
+Randomly permutes a subset of data, and calculates projected PCA scores for these 'random' genes. Then compares the PCA scores for the 'random' genes with the observed PCA scores to determine statistical significance. End result is a p-value for each gene's association with each principal component.
+
+```{r}
+seurat_magic_imputed_filtered <- JackStraw(seurat_magic_imputed_filtered, num.replicate = 100)
+seurat_magic_imputed_filtered <- ScoreJackStraw(seurat_magic_imputed_filtered, dims = 1:20)
+```
+
+The JackStrawPlot() function provides a visualization tool for comparing the distribution of p-values for each PC with a uniform distribution (dashed line). 
+‘Significant’ PCs will show a strong enrichment of features with low p-values (solid curve above the dashed line). 
+
+```{r}
+JackStrawPlot(seurat_magic_imputed_filtered, dims=1:15)
+```
+
+In the above plot we see that all the PC's are significant, especially the first 4.
+12 and 14 are the least.
+The PC's in this plot of the non imputed data were also significant but here we 
+see and a great improvement. 
+
+Now we'll use the ElbowPlot() - another tool for comparing the variation among the PC's.
+
+```{r}
+ElbowPlot(seurat_magic_imputed_filtered)
+```
+
+We notice that the first PC is the farthest away from the rest meaning it's the one with the closest signal.
+This plot looks like the control, the only difference us the standard deviation scale which is larger here. 
+
+## Clustering Cells
+1. Construct a KNN graph based on euclidean distance in PCA space (with edges drawn between cells with similar feature expression patterns). Input is the first 10 PC's (from conclusion above) - the defined dimensionality of the dataset.
+2. Find Clusters - group cells together. 
+The FindClusters() functions has a resolution (# of communities) argument that is usually set to 0.4-1.2 for 3K single-cell dataset - increases for larger datasets. 
+
+```{r}
+magic_imputed_clusters <- FindNeighbors(seurat_magic_imputed_filtered,k.param = 10)
+magic_imputed_clusters <- FindClusters(magic_imputed_clusters, resolution = seq(0.05,4,0.15))
+```
+
+We gave a sequence of resolutions to cluster by, and by that control the number 
+of clusters.
+
+```{r}
+sapply(grep("res",colnames(magic_imputed_clusters@meta.data),value = TRUE),
+       function(x) length(unique(magic_imputed_clusters@meta.data[,x])))
+```
+
+We see here that for different resolution values we get different amount of clusters. 
+We used resolution of 0.2 for the non imputed data, so we will use this again here. 
+We have a minor difference here that the number of cluster is 15 compared to 10.
+
+```{r}
+Idents(magic_imputed_clusters) <- "RNA_snn_res.0.2"
+head(Idents(magic_imputed_clusters),5)
+```
+
+## Run non-linear dimensional reduction (UMAP)
+We can use non linear dimensional reduction techniques to view and analyze our data.
+The goal of these algorithms is to learn the underlying manifold of the data in order to place similar cells together in low-dimensional space.
+We will use the first 10 PC's (dims 1:10).
+   
+```{r}
+magic_imputed_UMAP <- RunUMAP(magic_imputed_clusters, dims = 1:10)
+DimPlot(magic_imputed_UMAP, reduction = "umap", label = TRUE)
+```
+
+We see here that the clustering is different. We don't know what these clusters represent yet, but we do notice that there are 2 big clusters compared to 2 big clusters and a small and tiny cluster in the non imputed control UMAP.
+We need to find the markers for further analysis. 
+
+## Identification of all markers for each cluster
+
+```{r}
+DefaultAssay(magic_imputed_UMAP) <- "RNA"
+```
+
+```{r}
+magic_imputed_markers <- FindAllMarkers(magic_imputed_UMAP, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+```
+
+```{r}
+magic_imputed_markers
+```
+
+```{r}
+magic_imputed_markers <- subset(magic_imputed_markers, select = -c(gene))
+```
+
+```{r}
+magic_imputed_markers
+View(magic_imputed_markers)
+```
+
+In the output above:
+ - avg_logFC : positive value indicates that the gene is highly expressed in the cluster
+ - pct.1 : percentage of cells where the gene is detected in the cluster
+ - pct.2 : percentage of cells where the gene is detected on average in the other clusters
+ - p_val_adj : adjusted p-value for condition, based on bonferroni correction using all genes in the dataset, used to determine significance
+
+
+## Adding gene annotations
+Because we want to try and identify the clusters, it will be helpful to add to add a column with the gene annotation information. 
+The data is in the annotation file.
+
+```{r}
+annotations <- read.csv("/Users/romigoldner/Desktop/Research Proposal/Masters/R Code/annotation.csv")
+```
+
+```{r}
+annotations <- subset(annotations, select = c(gene_name, description))
+View(annotations)
+```
+
+After we found the markers for each cluster, we will add the information from the annotations file per gene.
+ 
+```{r}
+magic_imputed_markers <-magic_imputed_markers %>% tibble::rownames_to_column(var = "gene")
+maigc_cluster_markers <- left_join(magic_imputed_markers, annotations, by = c("gene" = "gene_name"))
+View(maigc_cluster_markers)
+```
+
+```{r}
+# remove duplicate rows
+maigc_cluster_markers <- maigc_cluster_markers[!duplicated(maigc_cluster_markers$gene), ]
+```
+
+## Evaluating marker genes
+We would like to use these gene lists to see of we can identify which celltypes these clusters identify with. 
+Let’s take a look at the top genes for each of the clusters and see if that gives us any hints. 
+
+```{r}
+# Extract top 10 markers per cluster
+top10_magic_cluster <- maigc_cluster_markers %>% group_by(cluster) %>% top_n(n=10, wt=avg_log2FC)
+
+# Visualize top 10 markers per cluster
+View(top10_magic_cluster)
+```
+
+The identification of the clusters will use the annotations attached and the Human Protein Atlas https://www.proteinatlas.org.
+
+```{r}
+# Rename all identities
+seurat_imputed_UMAP <- RenameIdents(object = magic_imputed_UMAP, 
+    "0" = "Naive CD4 T cells",
+    "1" = "Natural Killer cells",
+    "2" = "Naive CD4 T cells",
+    "3" = "T reg/MAIT T cells",
+    "4" = "Monocytes",
+    "5" = "Monocytes",
+    "6" = "Neutrophils",
+    "7" = "MAIT T cells",
+    "8" = "T reg/MAIT T cells",
+    "9" = "B cells",
+    "10" = "CD8 T cells",
+    "11" = "B cells",
+    "12" = "B cells",
+    "13" = "Monocytes",
+    "14" = "Basophils")
+```
+
+
+```{r}
+# Plot the UMAP wiht cluster identification
+DimPlot(object = seurat_imputed_UMAP, 
+        reduction = "umap", 
+        label = TRUE,
+        label.size = 3,
+        repel = TRUE)
+```
