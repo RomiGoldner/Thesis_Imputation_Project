@@ -4,8 +4,8 @@ This repository includes the code for the first part of my thesis project in whi
 The original gene expression and surface protein counts of the 10k PBMC’s Dataset from 10X Genomics can be found: https://www.10xgenomics.com/resources/datasets/10-k-pbm-cs-from-a-healthy-donor-gene-expression-and-cell-surface-protein-3-standard-3-0-0
 
 To apply the pipeline for a analyzing gene expression results, either use the orignal counts or imputed counts, as desired.
-- To use MAGIC for the imputaiton, use the pipeline "MAGIC_Pipeline_analysis"
-- To use DeepImpute/scGNN for the imputaiton, use the pipeline "Pipeline_analysis_general" - follow the instruction of each method on its GitHub page, and upload the imputed CSV file to the pipeline.
+- To use MAGIC for the imputaiton, use the pipeline "MAGIC_Pipeline_analysis.Rmd"
+- To use DeepImpute/scGNN for the imputaiton, use the pipeline "Pipeline_analysis_general.Rmd" - follow the instruction of each method on its GitHub page, and upload the imputed CSV file to the pipeline.
 
 ** The annotations file used is attached above and needs to be downloaded to the local computer.
 
