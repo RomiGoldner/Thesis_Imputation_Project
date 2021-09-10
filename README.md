@@ -7,6 +7,8 @@ To apply the pipeline for a analyzing gene expression results, either use the or
 - To use MAGIC for the imputaiton, use the pipeline "MAGIC_Pipeline_analysis"
 - To use DeepImpute/scGNN for the imputaiton, use the pipeline "Pipeline_analysis_general" - follow the instruction of each method on its GitHub page, and upload the imputed CSV file to the pipeline.
 
+** The annotations file used is attached above and needs to be downloaded to the local computer.
+
 The easily reproduce MASKING results here are links to the CSV files of the:
 - Original Gene Expression Counts: https://drive.google.com/file/d/19F8MOrpsPifGa8regRby_wqXFv4wb6W-/view?usp=sharing
 - Masked Gene Expression Counts: https://drive.google.com/file/d/17gKrnjWsIoQT8pB1ewo5LgcxUb7PJyI1/view?usp=sharing
