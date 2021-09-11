@@ -1,0 +1,491 @@
+---
+title: "analysis_surface_proteins"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r}
+# check local directory
+getwd()
+```
+
+```{r pressure, echo=FALSE}
+library(tidyr)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+```
+
+## Loading the data
+
+This is the notebook to run to preform the data analysis pipeline on the raw counts of the data.
+This is to have a control group we can compare the imputed results to. 
+In addition to the gene expression counts, this data has the surface protein counts as well, which will aid
+in the clustering process. 
+Link to data: https://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_suerat_obj_10k_protein_v3/pbmc_suerat_obj_10k_protein_v3_web_summary.html 
+
+```{r}
+# Read data using Read10X. The data.dir is a directory containing the matrix.mtx, genes.tsv (or features.tsv), and barcodes.tsv files provided by 10X Genomics.
+pbmc_suerat_obj.data <- Read10X(data.dir = "/Users/romigoldner/Desktop/Research Proposal/Masters/R Code/filtered_feature_bc_matrix/")
+```
+
+
+```{r}
+# Surface Proteins Data
+pbmc_suerat_obj_prot <- pbmc_suerat_obj.data[["Antibody Capture"]]
+pbmc_suerat_obj_prot
+summary(pbmc_suerat_obj_prot)
+```
+
+```{r}
+# Gene Expression Data
+gene_expression <- pbmc_suerat_obj.data$`Gene Expression`
+```
+
+```{r}
+# Initialize Seurat object with raw (un-normalized) data
+pbmc_suerat_obj_suerat_obj <- CreateSeuratObject(counts = gene_expression, project = "pbmc_suerat_obj10k", min.cells = 3, min.features = 200)
+pbmc_suerat_obj
+```
+
+```{r}
+# See what the dataset looks like 
+pbmc_suerat_obj[["RNA"]]@counts
+```
+
+```{r}
+# Look at specific rows (genes) with column size range
+gene_expression[c("CD3D", "TCL1A", "MS4A1"), 1:50]
+```
+
+## Standard pre processing workflow
+We will use some common metrics to analyze our data:
+ - The percentage of reads that map to the mitochondrial genome.
+ - Number of unique genes in each cell.
+ 
+```{r}
+# Here we will add the mitochondrial genes
+pbmc_suerat_obj[["percent.mt"]] <- PercentageFeatureSet(object = pbmc_suerat_obj, pattern = "^MT")
+```
+
+View QC metrics using a violin plot use *VlnPlot*
+```{r}
+VlnPlot(pbmc_suerat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r}
+head(pbmc_suerat_obj@meta.data, 100)
+pbmc_suerat_obj@meta.data
+```
+
+Look at feature - feature relationships.
+
+```{r}
+plot1 <- FeatureScatter(pbmc_suerat_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc_suerat_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+# Display the plots
+# To display side by side : plot1 + plot2 
+plot1
+plot2
+```
+
+We will now filter our data according to the results of the violin plot.
+The filtering is done to reduce the noise, which will help generate better 
+results.
+
+```{r}
+# The numbers need to be changed according to the results of the violin plot.
+pbmc_suerat_obj <- subset(pbmc_suerat_obj, subset = nFeature_RNA > 400 & nFeature_RNA < 3500 & percent.mt < 20 & nCount_RNA < 18000)
+```
+
+```{r}
+pbmc_suerat_obj@meta.data
+```
+
+## Normalize Data
+The normalization here will utilize LogNormalize - multiply by 10000 and take log of result.
+
+```{r}
+pbmc_suerat_obj <- NormalizeData(pbmc_suerat_obj, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+## Feature Selection
+We will now look for highly variable features. These features will be highly expressed in some cells and low in others. The default number of variable features is 2000, we will use it.
+
+```{r}
+pbmc_suerat_obj <- FindVariableFeatures(pbmc_suerat_obj, selection.method = "vst", nfeatures = 2000)
+pbmc_suerat_obj
+```
+
+Now we will plot the Variable Features and specifically label the top 10.
+
+```{r}
+# Identify the 10 most variable genes 
+top10 <- head(VariableFeatures(pbmc_suerat_obj), 10)
+
+# plot variable features with (top15) and without labels
+plot1 <- VariableFeaturePlot(pbmc_suerat_obj)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1
+plot2
+```
+
+## Scaling the data
+We will scale the data before preforming any sort of dimensionality reduction.
+This step will prevent the highly expressed genes from dominating in downstream analysis. 
+Results will be stored in imputed_pbmc_suerat_obj_norm[["RNA"]]@scale.data.
+
+```{r}
+all.genes <- row.names(pbmc_suerat_obj)
+pbmc_suerat_obj <- ScaleData(pbmc_suerat_obj, features = all.genes)
+```
+
+## Preform linear dimensionality reduction
+We will now preform PCA on the data.
+The PCA takes into account the variable features from above.
+
+```{r}
+pbmc_suerat_obj <- RunPCA(pbmc_suerat_obj, features = VariableFeatures(pbmc_suerat_obj))
+pbmc_suerat_obj[["pca"]]
+```
+
+We will now examine and visualize the PCA results in a few ways.
+We will use VisDimReduction(), DimPlot() and DimHeatmap() functions.
+The positive and negative grouping refers to the genes in regards to the component.
+
+```{r}
+# Visualization of top genes associated with reduction components
+VizDimLoadings(pbmc_suerat_obj, dims = 1:2, reduction = "pca")
+```
+
+```{r}
+# Plot the PCA (each point represents a cell)
+DimPlot(pbmc_suerat_obj, reduction = "pca")
+```
+
+DimHeatmap() allows for easy exploration of the primary sources of heterogeneity in a dataset, and can be useful when trying to decide which PCs to include for further downstream analysis. 
+Both cells and features are ordered according to their PCA scores. 
+Setting "cells" to a number plots the ‘extreme’ cells on both ends of the spectrum, which dramatically speeds plotting for large datasets. Though clearly a supervised analysis, we find this to be a valuable tool for exploring correlated feature sets.
+
+Looking at the DimHeatMap - displays the 15 genes with highest scores and 15 genes with lowest scores by default.
+
+```{r}
+DimHeatmap(pbmc_suerat_obj, dims=1:15, cells=500, balanced = TRUE)
+```
+
+
+## Determine the 'dimensionality' of the dataset
+Seurat clusters cells based on their PCA scores. 
+The PC represents a "metafeature" that combines information across a correlated feature set.
+We use here the JackStraw (JackStraw function) : 
+Randomly permutes a subset of data, and calculates projected PCA scores for these 'random' genes. Then compares the PCA scores for the 'random' genes with the observed PCA scores to determine statistical significance. End result is a p-value for each gene's association with each principal component.
+
+```{r}
+pbmc_suerat_obj <- JackStraw(pbmc_suerat_obj, num.replicate = 100)
+pbmc_suerat_obj <- ScoreJackStraw(pbmc_suerat_obj, dims = 1:20)
+```
+
+The JackStrawPlot() function provides a visualization tool for comparing the distribution of p-values for each PC with a uniform distribution (dashed line). 
+‘Significant’ PCs will show a strong enrichment of features with low p-values (solid curve above the dashed line). 
+
+```{r}
+JackStrawPlot(pbmc_suerat_obj, dims=1:15)
+```
+Now we'll use the ElbowPlot() - another tool for comparing the variation among the PC's.
+
+```{r}
+ElbowPlot(pbmc_suerat_obj)
+```
+
+## Clustering Cells
+
+1. Construct a KNN graph based on euclidean distance in PCA space (with edges drawn between            
+cells with similar feature expression patterns). Input is the first 8 PC's (from conclusion        
+above)- the defined dimensionality of the dataset.
+2. Find Clusters - group cells together. 
+The FindClusters() functions has a resolution (# of communities) argument that is usually set to 0.4-1.2 for 3K single-cell dataset - increases for larger datasets. 
+   
+```{r}
+pbmc_suerat_obj_clusters <- FindNeighbors(pbmc_suerat_obj,k.param = 10)
+pbmc_suerat_obj_clusters <- FindClusters(pbmc_suerat_obj_clusters, resolution = seq(0.05,4,0.15))
+```
+
+We gave a sequence of resultions to cluster by and by that control the number 
+of clusters.
+```{r}
+sapply(grep("res",colnames(pbmc_suerat_obj_clusters@meta.data),value = TRUE),
+       function(x) length(unique(pbmc_suerat_obj_clusters@meta.data[,x])))
+```
+
+The cluster per cell can be founds using the Idents() function or pbmc_suerat_obj_clusters$seurat_clusters.
+We will choose the clusters produced with resolution 0.2 because the others produce
+way too many clusters. 
+
+```{r}
+Idents(pbmc_suerat_obj_clusters) <- "RNA_snn_res.0.2"
+head(Idents(pbmc_suerat_obj_clusters),5)
+```
+
+## Run non-linear dimensional reduction (UMAP/tSNE)
+We can use non linear dimensional reduction techniques to view and analyze our data.
+The goal of these algorithms is to learn the underlying manifold of the data in order to place similar cells together in low-dimensional space.
+Cells that were previously close to each other (in the same cluster) in the analysis above should stay this way in the analysis.
+   
+```{r}
+data_UMAP <- RunUMAP(pbmc_suerat_obj_clusters, dims = 1:10)
+DimPlot(data_UMAP, reduction = "umap", label = TRUE)
+```
+
+## Finding differentially expressed features - cluster biomarkers
+We will find biomarkers that distinguish each cluster. 
+By default it identifies positive and negative markers of a cluster (in argument ident.1) compared to all cells. 
+This is done by using the FindMarkers() function.
+The FindAllMarkers() function does this process for all clusters.
+The min.pct argument requires a feature (gene) to be detected at a minimum percentage (the given value) in either of the two groups of cells. Here we set to at least 25%.
+
+pct.1 : The percentage of cells where the feature is detected in the first group
+pct.2 : The percentage of cells where the feature is detected in the second group
+
+
+```{r}
+# we can set only.pos = TRUE to find all positives
+# logfc.threshold value limits testing genes which show at least the value of difference (log scale) between 2 groups. The bigger the value the faster but less accurate 
+# in features argument we can test specific genes - default is all 
+cluster_markers <- FindAllMarkers(data_UMAP, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+```
+
+```{r}
+# group by clusters
+cluster_markers %>% group_by(cluster) %>% top_n(n = 10)
+```
+
+To view the expression distribution of markers across different clusters we can use the following:
+VlnPlot(), FeaturePlot(), Heatmap(), as well as RidgePlot(), CellScatter(), and DotPlot().
+
+Lets plots 2-3 biomarkets for each cluster - evaluated by p_val_adj -> lower better
+```{r}
+# cluster 0 example
+VlnPlot(data_UMAP, features = c("ZNF106", "ZNF524", "ZNHIT1"))
+```
+
+We extreacted 3 marker genes per cluster that will help us classify them.
+We can also use a FeaturePlot to view them.
+
+```{r}
+FeaturePlot(data_UMAP, features = c("ZNF106", "ZNF524", "ZNHIT1", "UQCRB", "UBA52", "UXT",
+                                       "TRBC2", "TRAT1", "TRBC1", "ZAP70", "ZEB2", "YWHAQ"), 
+            label = TRUE)
+```
+
+
+```{r}
+FeaturePlot(data_UMAP, features = c("VPREB3", "ZCCHC7", "VEGFB","ZBTB16", "ZFP36L2", "XBP1",
+                                        "XCL2", "ZAP70", "ZEB2", "ZNF385A", "ZNRF2", "ZNF672",
+                                        "ZNF703", "ZFAND5", "ZNF217", "ZNF783", "ZNF37A", "ZNF493"), 
+            label = TRUE)
+
+```
+
+DoHeatmap() generates an expression heatmap for given cells and features. 
+In this case, we are plotting the top 10 markers for each cell.
+
+What we want to see here is "yellow" (expression) sections unique for each cluster ->
+that's how we know that the top 10 genes for each cluster are really what classify it and
+can help us identify its type. 
+This also helps us finds similar clusters where top genes of of cluster are also highly
+expressed in another. 
+We will use the value of avg_log2FC which identifies the genes more uniquely than the previous.
+
+```{r}
+top10 <- cluster_markers %>% group_by(cluster) %>% top_n(n=10, wt=avg_log2FC)
+DoHeatmap(data_UMAP, features = top10$gene)
+```
+
+## Assigning cell identity to cluster
+In this case, because of biological knowledge we can classify the cell types to each cluster by its markers. We will use the VlnPlot to identify the clusters of the genes.
+
+We will look at the DoHeatMap and varify the cluster with violin plot.
+For cluster identification use:
+ - https://string-db.org/
+ - genecards.org
+ - https://www.proteinatlas.org
+```{r}
+VlnPlot(data_UMAP, features = c("IGHM"))
+```
+cluster 0 : Neutrophil / Monocyte
+cluster 1 : Naive T cells
+cluster 2 : CD4+ T cells
+cluster 3 : Natural Killer (NK)
+cluster 4 : B cells
+cluster 5 : lymphocytes - NK
+cluster 6 : CD8+
+cluster 7 : Basophils/DC
+cluster 8 : non classical monocyte
+cluster 9 : B cells
+
+```{r}
+#name the cluster id's
+new.cluster.ids <- c("Neutrophils", "Naive T cells", "CD4+ T cells", "NK", "B cells", "lymphocytes/NK", "CD8+", "Basophils/DC", "non classical monocyte", "B cells")
+# set number to name
+names(new.cluster.ids) <- levels(data_UMAP)
+# rename in data
+data_rename <- RenameIdents(data_UMAP, new.cluster.ids)
+DimPlot(data_rename, reduction = "umap", label = TRUE, pt.size = 0.5, label.size=3)
+```
+
+## THE ANNOTATIONS FILE WAS ALSO USED HERE AND GENERATED THE SAME RESULTS.
+## THE CODE FOR USING THE ANNOTATIONS CAN BE FOUND IN THE "Pipeline_analyses_general.
+
+
+# ------------------------------ Surface Proteins ------------------------------
+
+Now that we clustered our cells based on gene expression, we can cluster them according to the 
+surface proteins. 
+
+```{r}
+pbmc_suerat_obj_prot <- pbmc_suerat_obj.data[["Antibody Capture"]]
+pbmc_suerat_obj_prot
+```
+
+## Analyze Data
+
+```{r}
+data_UMAP_Sur_Proteins <- data_rename
+data_UMAP_Sur_Proteins
+```
+
+```{r}
+pbmc_suerat_obj_prot <- pbmc_suerat_obj_prot[, colnames(data_UMAP)]
+```
+
+```{r}
+# set rownames with surface proteins names
+rownames(pbmc_suerat_obj_prot) <- c("CD3", "CD4", "CD8a", "CD14","CD15", "CD16","CD56", 
+                              "CD19","CD25","CD45RA","CD45RO","PD-1","TIGIT", "CD127", 
+                              "IgG2a","IgG1", "IgG2b")
+```
+
+
+```{r}
+# add surface protein assay to the seurat project
+data_UMAP_Sur_Proteins[["Proteins"]] <- CreateAssayObject(pbmc_suerat_obj_prot)
+```
+
+```{r}
+# normalize the surface protein counts
+data_UMAP_Sur_Proteins <- NormalizeData(data_UMAP_Sur_Proteins, assay = "Proteins", normalization.method = "LogNormalize")
+```
+
+```{r}
+data_UMAP_Sur_Proteins <-ScaleData(data_UMAP_Sur_Proteins, assay = "Proteins")
+```
+
+
+# Visualize protein levels on RNA clusters
+
+```{r}
+FeaturePlot(data_UMAP_Sur_Proteins, features = c("CD3", "CD4", "CD8a", "CD14","CD15", "CD16","CD56", "CD127", "IgG2a","IgG1", "IgG2b"), min.cutoff = "q05", max.cutoff = "q95", ncol=4)
+```
+
+The feature plot shows that some of the proteins are very specific to a cluster area which is a good indication for the clustering we did based on gene imputation. 
+
+```{r}
+RidgePlot(data_UMAP_Sur_Proteins, features = c("CD3", "proteins_CD4", "CD8a", "proteins_CD14"), ncol=2)
+```
+
+```{r}
+# Downsample the clusters to a maximum of 300 cells each (makes the heatmap easier to see for
+# small clusters)
+proteins.small <- subset(data_UMAP_Sur_Proteins, downsample = 500)
+```
+
+```{r}
+FeatureScatter(data_UMAP_Sur_Proteins, feature1 = "CD3", feature2 = "CD19")
+```
+
+```{r}
+tcells <- subset(data_UMAP_Sur_Proteins, idents = c("Naive T cells", "CD4+ T cells", "CD8+"))
+FeatureScatter(tcells, feature1 = "CD4", feature2 = "CD8a")
+```
+
+```{r}
+# Find protein markers for all clusters, and draw a heatmap
+proteins.markers <- FindAllMarkers(data_UMAP_Sur_Proteins, assay = "Proteins", only.pos = TRUE)
+DoHeatmap(data_UMAP_Sur_Proteins, features = unique(proteins.markers$gene), assay="Proteins") + NoLegend()
+```
+
+We saw that there is correlation between our classification of the clusters with the surface proteins. Lets cluster directly on the proteins and than compare the results.
+
+From the above, we can see that the lymphocytes should actually be CD8+ so we will discard this group. 
+
+```{r}
+data_UMAP_Sur_Proteins <- subset(data_UMAP_Sur_Proteins, idents = c("lymphocytes/NK"), invert = TRUE)
+```
+
+## Cluster directly on protein levels
+
+```{r}
+DefaultAssay(data_UMAP_Sur_Proteins) <- "Proteins"
+data_UMAP_Sur_Proteins <- RunPCA(data_UMAP_Sur_Proteins, features = rownames(data_UMAP_Sur_Proteins),
+                                    reduction.name = "pca_prot", reduction.key = "pca_prot", verbose = FALSE)
+DimPlot(data_UMAP_Sur_Proteins, reduction = "pca_prot")
+```
+
+
+```{r}
+# Since we only have 10 markers, instead of doing PCA, we'll just use a standard euclidean
+# distance matrix here. 
+prot.data <- GetAssayData(data_UMAP_Sur_Proteins, slot = "data")
+prot.data_t <- t(as.matrix(prot.data))
+```
+
+```{r}
+prot.dist <- dist(prot.data_t) # measure distance
+
+# Before we re-cluster the data on ADT levels, we'll stash the RNA cluster IDs for later
+data_UMAP_Sur_Proteins[["rnaClusterID"]] <- Idents(data_UMAP_Sur_Proteins)
+```
+
+```{r}
+# Now, we rerun UMAP using our distance matrix defined only on protein levels.
+data_UMAP_Sur_Proteins[["umap_prot"]] <- RunUMAP(prot.dist, assay = "Proteins", reduction.key = "adtUMAP_")
+data_UMAP_Sur_Proteins[["prot_snn"]] <- FindNeighbors(prot.dist)$snn
+data_UMAP_Sur_Proteins <- FindClusters(data_UMAP_Sur_Proteins, resolution = 0.2, graph.name = "prot_snn")
+
+# We can compare the RNA and protein clustering, and use this to annotate the protein clustering
+# (we could also of course use FindMarkers)
+clustering.table <- table(Idents(data_UMAP_Sur_Proteins), data_UMAP_Sur_Proteins$rnaClusterID)
+clustering.table
+```
+
+Now what we want to do is to plot the clustering according to the proteins
+The table above will help detect the cell type of each cluster.
+
+```{r}
+new.cluster.ids <- c("Neutrophils", "CD4+ T cells", "Naive T cells", "NK", "B cells", "CD8+", "Naive T cells", "CD4+ T cells", "Basophils", "Neutrophils")
+names(new.cluster.ids) <- levels(data_UMAP_Sur_Proteins)
+data_UMAP_Sur_Proteins <- RenameIdents(data_UMAP_Sur_Proteins, new.cluster.ids)
+
+umap_rnaClusters <- DimPlot(data_UMAP_Sur_Proteins, reduction = "umap_prot", group.by = "rnaClusterID")
+umap_rnaClusters <- umap_rnaClusters + ggtitle("Clustering based on scRNA-seq") + theme(plot.title = element_text(hjust = 0.5))
+umap_rnaClusters <- LabelClusters(plot = umap_rnaClusters, id = "rnaClusterID", size = 4)
+
+umap_protClusters <- DimPlot(data_UMAP_Sur_Proteins, reduction = "umap_prot", pt.size = 0.5)
+umap_protClusters <- umap_protClusters + ggtitle("Clustering based on Surface Proteins Signal") + theme(plot.title = element_text(hjust = 0.5))
+umap_protClusters <- LabelClusters(plot = umap_protClusters, id = "ident", size = 4)
+
+# Note: for this comparison, both the RNA and protein clustering are visualized on a umap
+# generated using the ADT distance matrix.
+wrap_plots(list(umap_rnaClusters, umap_protClusters), ncol = 2)
+```
+
+```{r}
+RidgePlot(data_UMAP_Sur_Proteins, features = c("CD3", "proteins_CD4", "CD8a", "proteins_CD14"), ncol=2)
+```
+
+We can see that the plots are better distributed than before. 
