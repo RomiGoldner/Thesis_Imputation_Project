@@ -1,4 +1,4 @@
-# Thesis_Imputation_Project
+# First Part of Thesis - Imputation Methods Comparison
 This repository includes the code for the first part of my thesis project in which I analyze different imputation methods in PBMC data.
 
 The original gene expression and surface protein counts of the 10k PBMC’s Dataset from 10X Genomics can be found in this [link](https://www.10xgenomics.com/resources/datasets/10-k-pbm-cs-from-a-healthy-donor-gene-expression-and-cell-surface-protein-3-standard-3-0-0)
