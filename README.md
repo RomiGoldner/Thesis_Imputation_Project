@@ -7,9 +7,9 @@ To apply the pipeline for analyzing gene expression results, either use the orig
 - To use MAGIC for the imputaiton, use the pipeline "MAGIC_Pipeline_analysis.Rmd"
 - To use DeepImpute/scGNN for the imputaiton, use the pipeline "Pipeline_analysis_general.Rmd" - follow the instruction of each method on its GitHub page, and upload the imputed CSV file to the pipeline.
 
-To apply the pipeline for analyzing the gene expression results with the surface protein results, use "raw_data_analysis_with_surface_prot.Rmd".
-
 ** The annotations file used is attached above and needs to be downloaded to the local computer.
+
+To apply the pipeline for analyzing the original gene expression results with the surface protein results, use "raw_data_analysis_with_surface_prot.Rmd".
 
 To easily reproduce MASKING results here are links to the CSV files of the:
 - Original Gene Expression Counts: https://drive.google.com/file/d/19F8MOrpsPifGa8regRby_wqXFv4wb6W-/view?usp=sharing
@@ -20,7 +20,7 @@ To easily reproduce MASKING results here are links to the CSV files of the:
 ** mask_10__of_data: code to mask 10% of the data.
 ** analysis_of_Imputated_masked_data.ipynb: code for the analysis of the imputed masked counts.
 
-Quick access to imputation method's GitHub links :
+Quick access to imputation method's GitHub pages :
 - MAGIC: https://github.com/KrishnaswamyLab/MAGIC
 - DeepImpute: https://github.com/lanagarmire/deepimpute
 - scGNN: https://github.com/juexinwang/scGNN
