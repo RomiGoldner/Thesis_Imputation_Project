@@ -17,8 +17,7 @@ To easily reproduce MASKING results here are links to the CSV files of the:
 - [Imputes Masked counts by MAGIC](https://drive.google.com/file/d/17gKrnjWsIoQT8pB1ewo5LgcxUb7PJyI1/view?usp=sharing)
 - [Imputes Masked counts by DeepImpute](https://drive.google.com/file/d/1AekpB9SZFonpy6huj_oGArTqJWYUtWHW/view?usp=sharing) 
 
-** [mask_10__of_data.ipynb](mask_10__of_data.ipynb): code to mask 10% of the data.
-
+** [mask_10__of_data.ipynb](mask_10__of_data.ipynb): code to mask 10% of the data.<br/>
 ** [analysis_of_Imputated_masked_data.ipynb](analysis_of_Imputated_masked_data.ipynb): code for the analysis of the imputed masked counts.
 
 Quick access to imputation method's GitHub pages :
